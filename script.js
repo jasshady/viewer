@@ -1,8 +1,8 @@
 let scene, camera, renderer, particles;
 let video, faceModel;
 
-// HIGH RESOLUTION SETTINGS
-// 160 cols x 125 rows = 20,000 particles
+// CONFIGURATION
+// 160 cols x 125 rows = 20,000 particles (High Res for Face)
 const gridCols = 160; 
 const gridRows = 125;
 const particleCount = gridCols * gridRows;
@@ -11,13 +11,14 @@ const particleCount = gridCols * gridRows;
 let faceCanvas, faceCtx;
 
 // State Management
-let currentState = 'sphere'; // 'sphere' -> 'morphing' -> 'face'
+let currentState = 'sphere'; // sphere -> text -> morphing_to_face -> face
 let targetRotationX = 0;
 let targetRotationY = 0;
 
-// Arrays to store positions
+// Arrays to store positions for different shapes
 const spherePositions = new Float32Array(particleCount * 3);
 const gridPositions = new Float32Array(particleCount * 3);
+const textPositions = new Float32Array(particleCount * 3); // New array for text
 
 const themes = {
     cosmic: { h: 0.6, s: 0.7, l: 0.5 },
@@ -41,62 +42,122 @@ function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
     document.getElementById('container').appendChild(renderer.domElement);
 
-    // 2. Init processing canvas
+    // 2. Init processing canvas for Face
     faceCanvas = document.createElement('canvas');
     faceCanvas.width = gridCols;
     faceCanvas.height = gridRows;
     faceCtx = faceCanvas.getContext('2d', { willReadFrequently: true });
 
-    // 3. Calculate and Create Particles
-    calculatePositions();
+    // 3. Calculate Shapes
+    calculateSpherePositions();
+    calculateGridPositions();
+    calculateTextPositions("WELCOME JASMINEE❤️🌹"); // Calculate text coordinates
+
+    // 4. Create Particles (Start at Sphere)
     createParticles();
 
-    // 4. Start System
-    setupWebcam();
+    // 5. Start Sequence
+    setupWebcam(); // Pre-load camera permissions
     animate();
+
+    // 6. TRIGGER THE INTRO SEQUENCE
+    startIntroSequence();
 }
 
-// PRE-CALCULATE BOTH SHAPES (Sphere & Grid)
-function calculatePositions() {
-    // 1. SPHERE POSITIONS
+// --- SHAPE CALCULATIONS ---
+
+function calculateSpherePositions() {
     for (let i = 0; i < particleCount; i++) {
         const phi = Math.acos(-1 + (2 * i) / particleCount);
         const theta = Math.sqrt(particleCount * Math.PI) * phi;
-        
-        const r = 12; // Original Sphere radius
+        const r = 12; 
         spherePositions[i * 3] = r * Math.cos(theta) * Math.sin(phi);
         spherePositions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
         spherePositions[i * 3 + 2] = r * Math.cos(phi);
     }
+}
 
-    // 2. GRID POSITIONS
-    const width = 32; // Original Width in 3D space
-    const height = 25; // Original Height in 3D space
+function calculateGridPositions() {
+    const width = 32; 
+    const height = 25; 
     
     for (let i = 0; i < particleCount; i++) {
         const col = i % gridCols;
         const row = Math.floor(i / gridCols);
-
         const u = col / gridCols;
         const v = row / gridRows;
 
         gridPositions[i * 3] = (u - 0.5) * width;
         gridPositions[i * 3 + 1] = -(v - 0.5) * height;
-        gridPositions[i * 3 + 2] = 0; // Start flat
+        gridPositions[i * 3 + 2] = 0; 
+    }
+}
+
+function calculateTextPositions(text) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    // Make canvas large enough for high res text
+    canvas.width = 2000;
+    canvas.height = 1000;
+
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.fillStyle = 'white';
+    // Use a bold font that supports emojis
+    ctx.font = '900 180px "Inter", "Segoe UI Emoji", "Apple Color Emoji", sans-serif'; 
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    
+    const points = [];
+    // Scan pixel data
+    for (let y = 0; y < canvas.height; y += 6) { // step 6 for density
+        for (let x = 0; x < canvas.width; x += 6) {
+            const i = (y * canvas.width + x) * 4;
+            if (data[i] > 128) { // If pixel is white (text)
+                points.push({
+                    x: (x - canvas.width / 2) * 0.03, // Scale down to world units
+                    y: -(y - canvas.height / 2) * 0.03,
+                    z: 0
+                });
+            }
+        }
+    }
+
+    // Fill the textPositions array
+    for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3;
+        if (i < points.length) {
+            // Assign to text shape
+            textPositions[i3] = points[i].x;
+            textPositions[i3 + 1] = points[i].y;
+            textPositions[i3 + 2] = points[i].z;
+        } else {
+            // Leftover particles: Float in a background sphere (faint)
+            // We reuse sphere calc but wider
+            const phi = Math.acos(-1 + (2 * i) / particleCount);
+            const theta = Math.sqrt(particleCount * Math.PI) * phi;
+            const r = 40 + Math.random() * 10; // Distant background
+            textPositions[i3] = r * Math.cos(theta) * Math.sin(phi);
+            textPositions[i3 + 1] = r * Math.sin(theta) * Math.sin(phi);
+            textPositions[i3 + 2] = r * Math.cos(phi);
+        }
     }
 }
 
 function createParticles() {
     const geometry = new THREE.BufferGeometry();
-    
-    // Start with Sphere positions
+    // Start positions = Sphere
     const currentPositions = new Float32Array(spherePositions);
     const colors = new Float32Array(particleCount * 3);
 
-    // Init colors (White/Blueish)
+    // Init colors 
     for(let i=0; i<particleCount * 3; i+=3) {
         const color = new THREE.Color();
-        // Gradient based on sphere depth initially
         const z = spherePositions[i+2];
         color.setHSL(0.6, 0.8, 0.5 + z/20);
         colors[i] = color.r;
@@ -107,9 +168,8 @@ function createParticles() {
     geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-    // THE "GLOW" MATERIAL
     const material = new THREE.PointsMaterial({
-        size: 0.15, // Small, crisp dots
+        size: 0.15, 
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -121,42 +181,42 @@ function createParticles() {
     scene.add(particles);
 }
 
-async function setupWebcam() {
-    video = document.getElementById('webcam');
+// --- ANIMATION SEQUENCE ---
 
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { 
-                facingMode: 'user', 
-                width: { ideal: 640 }, 
-                height: { ideal: 480 } 
-            },
-            audio: false
-        });
-        video.srcObject = stream;
-        
-        await new Promise(resolve => video.onloadedmetadata = resolve);
-        await video.play();
+function startIntroSequence() {
+    // 1. Immediate Morph: Sphere -> Text
+    currentState = 'text';
+    
+    const positions = particles.geometry.attributes.position.array;
+    const animObj = { t: 0 };
+    
+    gsap.to(animObj, {
+        t: 1,
+        duration: 2.5, // 2.5s to form text
+        ease: "power3.out",
+        onUpdate: () => {
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                positions[i3] = spherePositions[i3] + (textPositions[i3] - spherePositions[i3]) * animObj.t;
+                positions[i3+1] = spherePositions[i3+1] + (textPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
+                positions[i3+2] = spherePositions[i3+2] + (textPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+        }
+    });
 
-        // Start tracking
-        faceModel = await blazeface.load();
-        detectFace();
-
-        // TRIGGER THE ANIMATION SEQUENCE
-        // Wait 2 seconds, then morph
-        setTimeout(triggerMorphSequence, 2000);
-
-    } catch (err) {
-        console.error("Webcam error:", err);
-    }
+    // 2. Wait 8 Seconds, then Morph to Face Grid
+    setTimeout(() => {
+        triggerFaceMorph();
+    }, 8000);
 }
 
-function triggerMorphSequence() {
-    currentState = 'morphing';
-
-    const positions = particles.geometry.attributes.position.array;
+function triggerFaceMorph() {
+    currentState = 'morphing_to_face';
     
-    // Use GSAP to tween every single particle from Sphere XYZ to Grid XYZ
+    const positions = particles.geometry.attributes.position.array;
+    // Current positions are effectively textPositions now
+    // We morph Text -> Grid
     const animObj = { t: 0 };
     
     gsap.to(animObj, {
@@ -166,32 +226,48 @@ function triggerMorphSequence() {
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
-                // Linear Interpolation (Lerp) between Sphere and Grid
-                positions[i3] = spherePositions[i3] + (gridPositions[i3] - spherePositions[i3]) * animObj.t;
-                positions[i3+1] = spherePositions[i3+1] + (gridPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
-                positions[i3+2] = spherePositions[i3+2] + (gridPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
+                positions[i3] = textPositions[i3] + (gridPositions[i3] - textPositions[i3]) * animObj.t;
+                positions[i3+1] = textPositions[i3+1] + (gridPositions[i3+1] - textPositions[i3+1]) * animObj.t;
+                positions[i3+2] = textPositions[i3+2] + (gridPositions[i3+2] - textPositions[i3+2]) * animObj.t;
             }
             particles.geometry.attributes.position.needsUpdate = true;
         },
         onComplete: () => {
-            currentState = 'face'; // Enable video data stream
+            currentState = 'face'; // Enable video stream
         }
     });
-    
-    // Reset rotation so the grid faces forward
-    gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2.5, ease: "power2.out" });
+
+    // Reset rotation incase the user moved the text around
+    gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2.5 });
+}
+
+// --- VIDEO & TRACKING ---
+
+async function setupWebcam() {
+    video = document.getElementById('webcam');
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+        });
+        video.srcObject = stream;
+        await new Promise(resolve => video.onloadedmetadata = resolve);
+        await video.play();
+        faceModel = await blazeface.load();
+        detectFace();
+    } catch (err) {
+        console.error("Webcam error:", err);
+    }
 }
 
 function updateParticlesFromVideo() {
     if (!video || video.readyState !== 4) return;
 
-    // 1. Draw video to canvas
     faceCtx.save();
-    faceCtx.scale(-1, 1); // Mirror flip
+    faceCtx.scale(-1, 1); 
     faceCtx.drawImage(video, -gridCols, 0, gridCols, gridRows);
     faceCtx.restore();
 
-    // 2. Get pixel data
     const frame = faceCtx.getImageData(0, 0, gridCols, gridRows);
     const data = frame.data;
     
@@ -206,21 +282,12 @@ function updateParticlesFromVideo() {
         const g = data[i4 + 1] / 255;
         const b = data[i4 + 2] / 255;
         
-        // Luma (Brightness)
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        const targetZ = (brightness * 10.0) - 3.0; 
         
-        // Z-DEPTH LOGIC
-        // Multiplier 8.0 gives nice depth.
-        const targetZ = (brightness * 8.0) - 2.0; 
-        
-        // Smooth Lerp
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
-        // COLOR LOGIC
-        // Mix theme color with brightness
         const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
-        
-        // We want bright pixels to be white/bright-colored, dark pixels to fade
         colors[i3] = themeColor.r * brightness + (r * 0.2);
         colors[i3+1] = themeColor.g * brightness + (g * 0.2);
         colors[i3+2] = themeColor.b * brightness + (b * 0.2);
@@ -232,37 +299,29 @@ function updateParticlesFromVideo() {
 
 async function detectFace() {
     if (!faceModel || !video) return;
-
     const predictions = await faceModel.estimateFaces(video, false);
-
     if (predictions.length > 0) {
         const start = predictions[0].topLeft;
         const end = predictions[0].bottomRight;
         const size = [end[0] - start[0], end[1] - start[1]];
-        
         const faceX = (start[0] + size[0] / 2) / video.videoWidth; 
         const faceY = (start[1] + size[1] / 2) / video.videoHeight;
-
-        targetRotationY = (faceX - 0.5) * 1.0; // Reduced sensitivity for stability
+        targetRotationY = (faceX - 0.5) * 1.0; 
         targetRotationX = (faceY - 0.5) * 0.5; 
     } else {
         targetRotationX *= 0.95;
         targetRotationY *= 0.95;
     }
-
     requestAnimationFrame(detectFace);
 }
 
 function adjustCamera() {
     const aspect = window.innerWidth / window.innerHeight;
-    if (aspect < 0.7) {
-        camera.position.z = 40; 
-    } else if (aspect < 1) {
-        camera.position.z = 35;
-    } else {
-        camera.position.z = 25;
-    }
-    camera.aspect = window.innerWidth / window.innerHeight;
+    if (aspect < 0.7) camera.position.z = 40; 
+    else if (aspect < 1) camera.position.z = 35;
+    else camera.position.z = 25;
+    
+    camera.aspect = aspect;
     camera.updateProjectionMatrix();
 }
 
@@ -271,7 +330,6 @@ function changeTheme(name) {
     document.querySelectorAll('.color-scheme button').forEach(b => b.classList.remove('active'));
     document.getElementById(`btn-${name}`).classList.add('active');
     
-    // Update Title
     const header = document.querySelector('.header h1');
     let gradient = 'linear-gradient(45deg, #ff6e7f, #bfe9ff)';
     if(name === 'neon') gradient = 'linear-gradient(45deg, #00ff87, #60efff)';
@@ -288,19 +346,15 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (particles) {
-        if (currentState === 'sphere') {
-            // Idle Spin
-            particles.rotation.y += 0.003;
-            particles.rotation.z += 0.001;
-        } 
-        else if (currentState === 'morphing') {
-            // No rotation during morph, GSAP handles positions
+        if (currentState === 'text') {
+            // Idle floating/wave for text
+            const time = Date.now() * 0.001;
+            // Only rotate slightly for 3D feel
+            particles.rotation.y = Math.sin(time * 0.5) * 0.05;
+            particles.rotation.x = Math.sin(time * 0.3) * 0.02;
         }
         else if (currentState === 'face') {
-            // 1. Update Z-depth from video
             updateParticlesFromVideo();
-
-            // 2. Apply Head Tracking
             particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.1;
             particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
         }
@@ -312,6 +366,13 @@ function animate() {
 window.addEventListener('resize', () => {
     adjustCamera();
     renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+        adjustCamera();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }, 100);
 });
 
 init();
