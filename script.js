@@ -15,11 +15,15 @@ let currentState = 'sphere';
 let targetRotationX = 0;
 let targetRotationY = 0;
 
+// Interaction (Ripples)
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let ripples = []; // Stores active ripples
+
 // Position & Color Arrays
 const spherePositions = new Float32Array(particleCount * 3);
 const gridPositions = new Float32Array(particleCount * 3);
 const textPositions = new Float32Array(particleCount * 3);
-// We need to store the "target" colors for the text phase
 const textColors = new Float32Array(particleCount * 3);
 
 // Themes
@@ -61,10 +65,45 @@ function init() {
 
     // 5. Run
     setupWebcam(); 
+    setupInteraction(); // NEW: Touch listeners
     animate();
 
     // 6. Start the Show
     startIntroSequence();
+}
+
+// --- INTERACTION LOGIC (RIPPLES) ---
+function setupInteraction() {
+    // Use pointerdown to handle both mouse clicks and touch taps
+    window.addEventListener('pointerdown', onTouch);
+}
+
+function onTouch(event) {
+    // Normalize mouse coordinates (-1 to +1)
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    // Raycast from camera to find where we touched in 3D space
+    raycaster.setFromCamera(mouse, camera);
+
+    // Create a virtual plane at Z=0 (where the face is)
+    const planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+    const target = new THREE.Vector3();
+    
+    // Check intersection
+    raycaster.ray.intersectPlane(planeZ, target);
+    
+    if (target) {
+        // Spawn a ripple at that 3D point
+        ripples.push({
+            x: target.x,
+            y: target.y,
+            age: 0,      // Current frame age
+            life: 60,    // How long it lasts (frames)
+            speed: 0.5,  // How fast it spreads
+            strength: 3.0 // Z-depth intensity
+        });
+    }
 }
 
 function calculateSpherePositions() {
@@ -123,14 +162,12 @@ function calculateTextPositions(text) {
     const data = imageData.data;
     const points = [];
     
-    // Denser scan for fuller text
+    // Denser scan
     const step = 6; 
 
     for (let y = 0; y < canvas.height; y += step) {
         for (let x = 0; x < canvas.width; x += step) {
             const i = (y * canvas.width + x) * 4;
-            // FIX: Check Red OR Green OR Blue. 
-            // Previously we only checked data[i] (Red), which ignored green stems.
             if (data[i] > 50 || data[i+1] > 50 || data[i+2] > 50) { 
                 points.push({
                     x: (x - canvas.width / 2) * 0.03, 
@@ -141,23 +178,20 @@ function calculateTextPositions(text) {
         }
     }
 
-    // 3. Assign Positions AND Colors for Text Mode
-    const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, 0.8); // Bright version
+    // 3. Assign Positions
+    const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, 0.8); 
 
     for (let i = 0; i < particleCount; i++) {
         const i3 = i * 3;
         if (i < points.length) {
-            // TEXT PARTICLES
             textPositions[i3] = points[i].x;
             textPositions[i3 + 1] = points[i].y;
             textPositions[i3 + 2] = points[i].z;
             
-            // Make them BRIGHT WHITE/THEME
             textColors[i3] = themeColor.r;
             textColors[i3+1] = themeColor.g;
             textColors[i3+2] = themeColor.b;
         } else {
-            // BACKGROUND PARTICLES (Faint)
             const phi = Math.acos(-1 + (2 * i) / particleCount);
             const theta = Math.sqrt(particleCount * Math.PI) * phi;
             const r = 50 + Math.random() * 10; 
@@ -165,7 +199,6 @@ function calculateTextPositions(text) {
             textPositions[i3 + 1] = r * Math.sin(theta) * Math.sin(phi);
             textPositions[i3 + 2] = r * Math.cos(phi);
 
-            // Make them dark/transparent
             textColors[i3] = 0.05;
             textColors[i3+1] = 0.05;
             textColors[i3+2] = 0.1;
@@ -191,7 +224,7 @@ function createParticles() {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.2, // Slightly larger for visibility
+        size: 0.2, 
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -208,9 +241,6 @@ function startIntroSequence() {
     
     const positions = particles.geometry.attributes.position.array;
     const colors = particles.geometry.attributes.color.array;
-    
-    // We also need to tween the COLORS from Sphere Colors -> Text Colors (Bright)
-    // Save start colors
     const startColors = new Float32Array(colors);
     
     const animObj = { t: 0 };
@@ -223,12 +253,10 @@ function startIntroSequence() {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
                 
-                // Morph Position
                 positions[i3] = spherePositions[i3] + (textPositions[i3] - spherePositions[i3]) * animObj.t;
                 positions[i3+1] = spherePositions[i3+1] + (textPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
                 positions[i3+2] = spherePositions[i3+2] + (textPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
                 
-                // Morph Color (Crucial for visibility!)
                 colors[i3] = startColors[i3] + (textColors[i3] - startColors[i3]) * animObj.t;
                 colors[i3+1] = startColors[i3+1] + (textColors[i3+1] - startColors[i3+1]) * animObj.t;
                 colors[i3+2] = startColors[i3+2] + (textColors[i3+2] - startColors[i3+2]) * animObj.t;
@@ -238,7 +266,6 @@ function startIntroSequence() {
         }
     });
 
-    // Wait 8 seconds, then morph to Face Grid
     setTimeout(() => {
         triggerFaceMorph();
     }, 8000);
@@ -288,6 +315,14 @@ async function setupWebcam() {
 }
 
 function updateParticlesFromVideo() {
+    // 1. Clean up old ripples
+    for(let i = ripples.length - 1; i >= 0; i--) {
+        ripples[i].age++;
+        if(ripples[i].age > ripples[i].life) {
+            ripples.splice(i, 1);
+        }
+    }
+
     if (!video || video.readyState !== 4) return;
 
     faceCtx.save();
@@ -310,7 +345,33 @@ function updateParticlesFromVideo() {
         const b = data[i4 + 2] / 255;
         
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-        const targetZ = (brightness * 12.0) - 4.0; 
+        
+        // -- RIPPLE CALCULATION --
+        let rippleZ = 0;
+        // Use gridPositions for stable anchor points for wave calc
+        const px = gridPositions[i3];
+        const py = gridPositions[i3 + 1];
+
+        for (const wave of ripples) {
+            const dx = px - wave.x;
+            const dy = py - wave.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            
+            // Radius of the wavefront at this moment
+            const currentRadius = wave.age * wave.speed;
+            const distFromWave = Math.abs(dist - currentRadius);
+            
+            // If particle is near the wavefront
+            if (distFromWave < 2.5) { 
+                // Strength fades with age and distance
+                const fade = (1 - wave.age / wave.life) * (1 - distFromWave/2.5);
+                // Cosine wave: pushes Z back
+                rippleZ -= Math.cos(distFromWave) * wave.strength * fade;
+            }
+        }
+
+        // Final Z = Brightness depth + Ripple Offset
+        const targetZ = (brightness * 12.0) - 4.0 + rippleZ; 
         
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
