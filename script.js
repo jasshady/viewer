@@ -123,13 +123,15 @@ function calculateTextPositions(text) {
     const data = imageData.data;
     const points = [];
     
-    // FIX: Denser scan (6 instead of 8) for brighter, fuller text
+    // Denser scan for fuller text
     const step = 6; 
 
     for (let y = 0; y < canvas.height; y += step) {
         for (let x = 0; x < canvas.width; x += step) {
             const i = (y * canvas.width + x) * 4;
-            if (data[i] > 128) { 
+            // FIX: Check Red OR Green OR Blue. 
+            // Previously we only checked data[i] (Red), which ignored green stems.
+            if (data[i] > 50 || data[i+1] > 50 || data[i+2] > 50) { 
                 points.push({
                     x: (x - canvas.width / 2) * 0.03, 
                     y: -(y - canvas.height / 2) * 0.03,
