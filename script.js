@@ -26,6 +26,9 @@ const gridPositions = new Float32Array(particleCount * 3);
 const textPositions = new Float32Array(particleCount * 3);
 const textColors = new Float32Array(particleCount * 3);
 
+// Reusable Color Object (Optimization)
+const tempColor = new THREE.Color();
+
 // Themes
 const themes = {
     cosmic: { h: 0.6, s: 0.7, l: 0.5 },
@@ -65,43 +68,36 @@ function init() {
 
     // 5. Run
     setupWebcam(); 
-    setupInteraction(); // NEW: Touch listeners
+    setupInteraction(); 
     animate();
 
     // 6. Start the Show
     startIntroSequence();
 }
 
-// --- INTERACTION LOGIC (RIPPLES) ---
+// --- INTERACTION LOGIC ---
 function setupInteraction() {
-    // Use pointerdown to handle both mouse clicks and touch taps
     window.addEventListener('pointerdown', onTouch);
 }
 
 function onTouch(event) {
-    // Normalize mouse coordinates (-1 to +1)
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-    // Raycast from camera to find where we touched in 3D space
     raycaster.setFromCamera(mouse, camera);
-
-    // Create a virtual plane at Z=0 (where the face is)
     const planeZ = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
     const target = new THREE.Vector3();
     
-    // Check intersection
     raycaster.ray.intersectPlane(planeZ, target);
     
     if (target) {
-        // Spawn a ripple at that 3D point
         ripples.push({
             x: target.x,
             y: target.y,
-            age: 0,      // Current frame age
-            life: 60,    // How long it lasts (frames)
-            speed: 0.5,  // How fast it spreads
-            strength: 3.0 // Z-depth intensity
+            age: 0,      
+            life: 60,    
+            speed: 0.5,  
+            strength: 4.0 // Increased strength for color impact
         });
     }
 }
@@ -138,7 +134,6 @@ function calculateTextPositions(text) {
     canvas.width = 4096; 
     canvas.height = 1024;
 
-    // 1. Detect Font Size
     let fontSize = 300;
     ctx.font = `900 ${fontSize}px "Inter", sans-serif`;
     let textWidth = ctx.measureText(text).width;
@@ -149,7 +144,6 @@ function calculateTextPositions(text) {
         textWidth = ctx.measureText(text).width;
     }
 
-    // 2. Draw Text
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
@@ -162,7 +156,6 @@ function calculateTextPositions(text) {
     const data = imageData.data;
     const points = [];
     
-    // Denser scan
     const step = 6; 
 
     for (let y = 0; y < canvas.height; y += step) {
@@ -178,7 +171,6 @@ function calculateTextPositions(text) {
         }
     }
 
-    // 3. Assign Positions
     const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, 0.8); 
 
     for (let i = 0; i < particleCount; i++) {
@@ -315,12 +307,10 @@ async function setupWebcam() {
 }
 
 function updateParticlesFromVideo() {
-    // 1. Clean up old ripples
+    // 1. Clean ripples
     for(let i = ripples.length - 1; i >= 0; i--) {
         ripples[i].age++;
-        if(ripples[i].age > ripples[i].life) {
-            ripples.splice(i, 1);
-        }
+        if(ripples[i].age > ripples[i].life) ripples.splice(i, 1);
     }
 
     if (!video || video.readyState !== 4) return;
@@ -346,9 +336,8 @@ function updateParticlesFromVideo() {
         
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
         
-        // -- RIPPLE CALCULATION --
+        // -- RIPPLE CALC --
         let rippleZ = 0;
-        // Use gridPositions for stable anchor points for wave calc
         const px = gridPositions[i3];
         const py = gridPositions[i3 + 1];
 
@@ -356,29 +345,39 @@ function updateParticlesFromVideo() {
             const dx = px - wave.x;
             const dy = py - wave.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            
-            // Radius of the wavefront at this moment
             const currentRadius = wave.age * wave.speed;
             const distFromWave = Math.abs(dist - currentRadius);
             
-            // If particle is near the wavefront
             if (distFromWave < 2.5) { 
-                // Strength fades with age and distance
                 const fade = (1 - wave.age / wave.life) * (1 - distFromWave/2.5);
-                // Cosine wave: pushes Z back
                 rippleZ -= Math.cos(distFromWave) * wave.strength * fade;
             }
         }
 
-        // Final Z = Brightness depth + Ripple Offset
+        // Final Z = Face Depth + Ripple Depth
         const targetZ = (brightness * 12.0) - 4.0 + rippleZ; 
         
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
-        const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
-        colors[i3] = themeColor.r * brightness + (r * 0.15);
-        colors[i3+1] = themeColor.g * brightness + (g * 0.15);
-        colors[i3+2] = themeColor.b * brightness + (b * 0.15);
+        // --- DYNAMIC COLOR SHIFTING ---
+        // We shift the hue based on the Z-depth (targetZ)
+        // We shift the lightness based on Ripple Intensity (rippleZ)
+        
+        // Map Z (-5 to 15) to a small hue shift (-0.1 to 0.1)
+        const hueOffset = (targetZ * 0.015); 
+        // Map Ripple to lightness boost (Make peaks bright)
+        const lightOffset = Math.abs(rippleZ) * 0.1;
+
+        // Update Temp Color based on Theme + Depth
+        tempColor.setHSL(
+            (currentTheme.h + hueOffset + 1.0) % 1.0, 
+            currentTheme.s, 
+            Math.min(1.0, currentTheme.l + lightOffset)
+        );
+
+        colors[i3] = tempColor.r * brightness + (r * 0.15);
+        colors[i3+1] = tempColor.g * brightness + (g * 0.15);
+        colors[i3+2] = tempColor.b * brightness + (b * 0.15);
     }
     
     particles.geometry.attributes.position.needsUpdate = true;
