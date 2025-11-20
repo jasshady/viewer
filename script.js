@@ -3,16 +3,19 @@ let video, faceModel;
 
 // HIGH RESOLUTION SETTINGS
 // 160 cols x 125 rows = 20,000 particles
-// This creates a much denser, sharper image than before
 const gridCols = 160; 
 const gridRows = 125;
 const particleCount = gridCols * gridRows;
+
+// World Dimensions (Scaled up for better camera framing)
+const worldWidth = 64;  
+const worldHeight = 50; 
 
 // Processing Canvas (Hidden)
 let faceCanvas, faceCtx;
 
 // State Management
-let currentState = 'sphere'; // 'sphere' -> 'morphing' -> 'face'
+let currentState = 'sphere'; 
 let targetRotationX = 0;
 let targetRotationY = 0;
 
@@ -32,11 +35,10 @@ let currentTheme = themes.cosmic;
 function init() {
     // 1. Scene Setup
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.02);
+    scene.fog = new THREE.FogExp2(0x050505, 0.015); // Lighter fog for distance
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    adjustCamera();
-
+    
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
@@ -52,28 +54,27 @@ function init() {
     calculatePositions();
     createParticles();
 
-    // 4. Start System
+    // 4. Initial Camera Fit
+    adjustCamera();
+
+    // 5. Start System
     setupWebcam();
     animate();
 }
 
-// PRE-CALCULATE BOTH SHAPES (Sphere & Grid)
 function calculatePositions() {
-    // 1. SPHERE POSITIONS
+    // 1. SPHERE POSITIONS (Scaled up)
     for (let i = 0; i < particleCount; i++) {
         const phi = Math.acos(-1 + (2 * i) / particleCount);
         const theta = Math.sqrt(particleCount * Math.PI) * phi;
         
-        const r = 12; // Sphere radius
+        const r = 22; // Larger Sphere radius
         spherePositions[i * 3] = r * Math.cos(theta) * Math.sin(phi);
         spherePositions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
         spherePositions[i * 3 + 2] = r * Math.cos(phi);
     }
 
-    // 2. GRID POSITIONS
-    const width = 32; // Width in 3D space
-    const height = 25; // Height in 3D space
-    
+    // 2. GRID POSITIONS (Centered)
     for (let i = 0; i < particleCount; i++) {
         const col = i % gridCols;
         const row = Math.floor(i / gridCols);
@@ -81,25 +82,23 @@ function calculatePositions() {
         const u = col / gridCols;
         const v = row / gridRows;
 
-        gridPositions[i * 3] = (u - 0.5) * width;
-        gridPositions[i * 3 + 1] = -(v - 0.5) * height;
-        gridPositions[i * 3 + 2] = 0; // Start flat
+        // Map to 3D space centered at 0,0
+        gridPositions[i * 3] = (u - 0.5) * worldWidth;
+        gridPositions[i * 3 + 1] = -(v - 0.5) * worldHeight;
+        gridPositions[i * 3 + 2] = 0; 
     }
 }
 
 function createParticles() {
     const geometry = new THREE.BufferGeometry();
-    
-    // Start with Sphere positions
     const currentPositions = new Float32Array(spherePositions);
     const colors = new Float32Array(particleCount * 3);
 
-    // Init colors (White/Blueish)
+    // Init colors
     for(let i=0; i<particleCount * 3; i+=3) {
         const color = new THREE.Color();
-        // Gradient based on sphere depth initially
         const z = spherePositions[i+2];
-        color.setHSL(0.6, 0.8, 0.5 + z/20);
+        color.setHSL(0.6, 0.8, 0.5 + z/40);
         colors[i] = color.r;
         colors[i+1] = color.g;
         colors[i+2] = color.b;
@@ -108,14 +107,13 @@ function createParticles() {
     geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-    // THE "GLOW" MATERIAL
     const material = new THREE.PointsMaterial({
-        size: 0.15, // Small, crisp dots
+        size: 0.35, // Base size, adjusted dynamically later
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         transparent: true,
-        opacity: 0.85
+        opacity: 0.9
     });
 
     particles = new THREE.Points(geometry, material);
@@ -139,13 +137,11 @@ async function setupWebcam() {
         await new Promise(resolve => video.onloadedmetadata = resolve);
         await video.play();
 
-        // Start tracking
         faceModel = await blazeface.load();
         detectFace();
 
-        // TRIGGER THE ANIMATION SEQUENCE
-        // Wait 2 seconds, then morph
-        setTimeout(triggerMorphSequence, 2000);
+        // Trigger morph after short delay
+        setTimeout(triggerMorphSequence, 1500);
 
     } catch (err) {
         console.error("Webcam error:", err);
@@ -156,10 +152,6 @@ function triggerMorphSequence() {
     currentState = 'morphing';
 
     const positions = particles.geometry.attributes.position.array;
-    
-    // Use GSAP to tween every single particle from Sphere XYZ to Grid XYZ
-    // This creates the "Process happening in front of eyes" effect
-    
     const animObj = { t: 0 };
     
     gsap.to(animObj, {
@@ -169,7 +161,6 @@ function triggerMorphSequence() {
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
-                // Linear Interpolation (Lerp) between Sphere and Grid
                 positions[i3] = spherePositions[i3] + (gridPositions[i3] - spherePositions[i3]) * animObj.t;
                 positions[i3+1] = spherePositions[i3+1] + (gridPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
                 positions[i3+2] = spherePositions[i3+2] + (gridPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
@@ -177,24 +168,21 @@ function triggerMorphSequence() {
             particles.geometry.attributes.position.needsUpdate = true;
         },
         onComplete: () => {
-            currentState = 'face'; // Enable video data stream
+            currentState = 'face'; 
         }
     });
     
-    // Reset rotation so the grid faces forward
     gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2.5, ease: "power2.out" });
 }
 
 function updateParticlesFromVideo() {
     if (!video || video.readyState !== 4) return;
 
-    // 1. Draw video to canvas
     faceCtx.save();
-    faceCtx.scale(-1, 1); // Mirror flip
+    faceCtx.scale(-1, 1); 
     faceCtx.drawImage(video, -gridCols, 0, gridCols, gridRows);
     faceCtx.restore();
 
-    // 2. Get pixel data
     const frame = faceCtx.getImageData(0, 0, gridCols, gridRows);
     const data = frame.data;
     
@@ -209,27 +197,19 @@ function updateParticlesFromVideo() {
         const g = data[i4 + 1] / 255;
         const b = data[i4 + 2] / 255;
         
-        // Luma (Brightness)
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
         
-        // Z-DEPTH LOGIC
-        // Only modify Z. Keep X and Y locked to the grid positions.
-        // We use the brightness to "push" particles towards the camera.
-        // Multiplier 8.0 gives nice depth.
-        const targetZ = (brightness * 8.0) - 2.0; 
+        // Z-DEPTH Logic (Pin Art)
+        // Multiplier determines how much the face "pops" out
+        const targetZ = (brightness * 12.0) - 4.0; 
         
-        // Smooth Lerp
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
-        // COLOR LOGIC
-        // Mix theme color with brightness
+        // Color Tinting
         const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
-        
-        // We want bright pixels to be white/bright-colored, dark pixels to fade
-        // This creates the "Hologram" look vs just a blocky image
-        colors[i3] = themeColor.r * brightness + (r * 0.2);
-        colors[i3+1] = themeColor.g * brightness + (g * 0.2);
-        colors[i3+2] = themeColor.b * brightness + (b * 0.2);
+        colors[i3] = themeColor.r * brightness + (r * 0.15);
+        colors[i3+1] = themeColor.g * brightness + (g * 0.15);
+        colors[i3+2] = themeColor.b * brightness + (b * 0.15);
     }
     
     particles.geometry.attributes.position.needsUpdate = true;
@@ -249,8 +229,8 @@ async function detectFace() {
         const faceX = (start[0] + size[0] / 2) / video.videoWidth; 
         const faceY = (start[1] + size[1] / 2) / video.videoHeight;
 
-        targetRotationY = (faceX - 0.5) * 1.0; // Reduced sensitivity for stability
-        targetRotationX = (faceY - 0.5) * 0.5; 
+        targetRotationY = (faceX - 0.5) * 0.8; 
+        targetRotationX = (faceY - 0.5) * 0.4; 
     } else {
         targetRotationX *= 0.95;
         targetRotationY *= 0.95;
@@ -259,16 +239,34 @@ async function detectFace() {
     requestAnimationFrame(detectFace);
 }
 
+// "COVER" LOGIC FOR FULL SCREEN
 function adjustCamera() {
     const aspect = window.innerWidth / window.innerHeight;
-    if (aspect < 0.7) {
-        camera.position.z = 40; 
-    } else if (aspect < 1) {
-        camera.position.z = 35;
-    } else {
-        camera.position.z = 25;
+    const fov = camera.fov * (Math.PI / 180);
+    
+    // Calculate distance needed to fit Height
+    const distHeight = worldHeight / (2 * Math.tan(fov / 2));
+    
+    // Calculate distance needed to fit Width
+    const distWidth = worldWidth / (2 * Math.tan(fov / 2) * aspect);
+    
+    // To "Cover" the screen (no borders), we must be close enough
+    // that the object is LARGER than the view.
+    // We pick the SMALLER distance of the two fit distances.
+    const fitDist = Math.min(distHeight, distWidth);
+    
+    // Move slightly closer (0.9) to ensure edges are strictly cut off
+    camera.position.z = fitDist * 0.9;
+    
+    // Adjust particle size based on zoom so they don't look sparse
+    if (particles) {
+        // If we are very close (low z), make particles smaller to keep resolution
+        // If we are far (high z), make them bigger
+        // Base scale logic roughly on standard distance 40
+        particles.material.size = 0.35 * (camera.position.z / 40);
     }
-    camera.aspect = window.innerWidth / window.innerHeight;
+
+    camera.aspect = aspect;
     camera.updateProjectionMatrix();
 }
 
@@ -277,7 +275,6 @@ function changeTheme(name) {
     document.querySelectorAll('.color-scheme button').forEach(b => b.classList.remove('active'));
     document.getElementById(`btn-${name}`).classList.add('active');
     
-    // Update Title
     const header = document.querySelector('.header h1');
     let gradient = 'linear-gradient(45deg, #ff6e7f, #bfe9ff)';
     if(name === 'neon') gradient = 'linear-gradient(45deg, #00ff87, #60efff)';
@@ -295,18 +292,11 @@ function animate() {
 
     if (particles) {
         if (currentState === 'sphere') {
-            // Idle Spin
             particles.rotation.y += 0.003;
             particles.rotation.z += 0.001;
         } 
-        else if (currentState === 'morphing') {
-            // No rotation during morph, GSAP handles positions
-        }
         else if (currentState === 'face') {
-            // 1. Update Z-depth from video
             updateParticlesFromVideo();
-
-            // 2. Apply Head Tracking
             particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.1;
             particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
         }
