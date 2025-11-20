@@ -1,33 +1,38 @@
 let scene, camera, renderer, particles;
 let video, faceModel;
 
-// GRID CONFIGURATION
-// 120 cols x 100 rows = 12,000 particles
-const gridCols = 120; 
-const gridRows = 100;
+// HIGH RESOLUTION SETTINGS
+// 160 cols x 125 rows = 20,000 particles
+// This creates a much denser, sharper image than before
+const gridCols = 160; 
+const gridRows = 125;
 const particleCount = gridCols * gridRows;
 
-// Processing Canvas
+// Processing Canvas (Hidden)
 let faceCanvas, faceCtx;
 
-// Tracking
+// State Management
+let currentState = 'sphere'; // 'sphere' -> 'morphing' -> 'face'
 let targetRotationX = 0;
 let targetRotationY = 0;
 
-// Themes
+// Arrays to store positions
+const spherePositions = new Float32Array(particleCount * 3);
+const gridPositions = new Float32Array(particleCount * 3);
+
 const themes = {
-    cosmic: { h: 0.6, s: 0.7, l: 0.5 }, // Blue/Pink
-    neon: { h: 0.4, s: 1.0, l: 0.5 },   // Cyan/Green
-    sunset: { h: 0.05, s: 0.9, l: 0.5 }, // Red/Orange
-    ocean: { h: 0.55, s: 0.8, l: 0.5 }, // Deep Blue
-    matrix: { h: 0.33, s: 1.0, l: 0.5 } // Pure Green
+    cosmic: { h: 0.6, s: 0.7, l: 0.5 },
+    neon: { h: 0.4, s: 1.0, l: 0.5 },
+    sunset: { h: 0.05, s: 0.9, l: 0.5 },
+    ocean: { h: 0.55, s: 0.8, l: 0.5 },
+    matrix: { h: 0.33, s: 1.0, l: 0.5 }
 };
 let currentTheme = themes.cosmic;
 
 function init() {
     // 1. Scene Setup
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.03); // Darker fog for depth
+    scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     adjustCamera();
@@ -37,65 +42,80 @@ function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
     document.getElementById('container').appendChild(renderer.domElement);
 
-    // 2. Init processing canvas (hidden)
+    // 2. Init processing canvas
     faceCanvas = document.createElement('canvas');
     faceCanvas.width = gridCols;
     faceCanvas.height = gridRows;
     faceCtx = faceCanvas.getContext('2d', { willReadFrequently: true });
 
-    // 3. Create Particles
-    createParticleGrid();
+    // 3. Calculate and Create Particles
+    calculatePositions();
+    createParticles();
 
     // 4. Start System
     setupWebcam();
     animate();
 }
 
-function createParticleGrid() {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
+// PRE-CALCULATE BOTH SHAPES (Sphere & Grid)
+function calculatePositions() {
+    // 1. SPHERE POSITIONS
+    for (let i = 0; i < particleCount; i++) {
+        const phi = Math.acos(-1 + (2 * i) / particleCount);
+        const theta = Math.sqrt(particleCount * Math.PI) * phi;
+        
+        const r = 12; // Sphere radius
+        spherePositions[i * 3] = r * Math.cos(theta) * Math.sin(phi);
+        spherePositions[i * 3 + 1] = r * Math.sin(theta) * Math.sin(phi);
+        spherePositions[i * 3 + 2] = r * Math.cos(phi);
+    }
 
-    // Create a centered grid
-    // Width: 30 units, Height: 25 units (4:3 aspect ratio approx)
-    const width = 30;
-    const height = 25;
-
+    // 2. GRID POSITIONS
+    const width = 32; // Width in 3D space
+    const height = 25; // Height in 3D space
+    
     for (let i = 0; i < particleCount; i++) {
         const col = i % gridCols;
         const row = Math.floor(i / gridCols);
 
-        // Normalize coordinates (-0.5 to 0.5)
         const u = col / gridCols;
         const v = row / gridRows;
 
-        // Map to 3D space
-        // We center it by subtracting 0.5
-        const x = (u - 0.5) * width;
-        const y = -(v - 0.5) * height; // Flip Y for correct orientation
-        const z = 0; 
+        gridPositions[i * 3] = (u - 0.5) * width;
+        gridPositions[i * 3 + 1] = -(v - 0.5) * height;
+        gridPositions[i * 3 + 2] = 0; // Start flat
+    }
+}
 
-        const i3 = i * 3;
-        positions[i3] = x;
-        positions[i3 + 1] = y;
-        positions[i3 + 2] = z;
+function createParticles() {
+    const geometry = new THREE.BufferGeometry();
+    
+    // Start with Sphere positions
+    const currentPositions = new Float32Array(spherePositions);
+    const colors = new Float32Array(particleCount * 3);
 
-        // Set initial color (will be overwritten by video)
-        colors[i3] = 1;
-        colors[i3+1] = 1;
-        colors[i3+2] = 1;
+    // Init colors (White/Blueish)
+    for(let i=0; i<particleCount * 3; i+=3) {
+        const color = new THREE.Color();
+        // Gradient based on sphere depth initially
+        const z = spherePositions[i+2];
+        color.setHSL(0.6, 0.8, 0.5 + z/20);
+        colors[i] = color.r;
+        colors[i+1] = color.g;
+        colors[i+2] = color.b;
     }
 
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
+    // THE "GLOW" MATERIAL
     const material = new THREE.PointsMaterial({
-        size: 0.25, // Size of each "pixel"
+        size: 0.15, // Small, crisp dots
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         transparent: true,
-        opacity: 0.9
+        opacity: 0.85
     });
 
     particles = new THREE.Points(geometry, material);
@@ -119,24 +139,58 @@ async function setupWebcam() {
         await new Promise(resolve => video.onloadedmetadata = resolve);
         await video.play();
 
-        // Start tracking after video is live
+        // Start tracking
         faceModel = await blazeface.load();
         detectFace();
 
+        // TRIGGER THE ANIMATION SEQUENCE
+        // Wait 2 seconds, then morph
+        setTimeout(triggerMorphSequence, 2000);
+
     } catch (err) {
         console.error("Webcam error:", err);
-        alert("Camera access needed for the mirror effect!");
     }
 }
 
-// Updates particle Z-positions and Colors based on video frame
-function updateParticles() {
+function triggerMorphSequence() {
+    currentState = 'morphing';
+
+    const positions = particles.geometry.attributes.position.array;
+    
+    // Use GSAP to tween every single particle from Sphere XYZ to Grid XYZ
+    // This creates the "Process happening in front of eyes" effect
+    
+    const animObj = { t: 0 };
+    
+    gsap.to(animObj, {
+        t: 1,
+        duration: 3,
+        ease: "power3.inOut",
+        onUpdate: () => {
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                // Linear Interpolation (Lerp) between Sphere and Grid
+                positions[i3] = spherePositions[i3] + (gridPositions[i3] - spherePositions[i3]) * animObj.t;
+                positions[i3+1] = spherePositions[i3+1] + (gridPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
+                positions[i3+2] = spherePositions[i3+2] + (gridPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+        },
+        onComplete: () => {
+            currentState = 'face'; // Enable video data stream
+        }
+    });
+    
+    // Reset rotation so the grid faces forward
+    gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2.5, ease: "power2.out" });
+}
+
+function updateParticlesFromVideo() {
     if (!video || video.readyState !== 4) return;
 
-    // 1. Draw video to small canvas (Scaling down acts as pixelation)
-    // Scale(-1, 1) creates the mirror effect
+    // 1. Draw video to canvas
     faceCtx.save();
-    faceCtx.scale(-1, 1);
+    faceCtx.scale(-1, 1); // Mirror flip
     faceCtx.drawImage(video, -gridCols, 0, gridCols, gridRows);
     faceCtx.restore();
 
@@ -148,56 +202,40 @@ function updateParticles() {
     const colors = particles.geometry.attributes.color.array;
 
     for (let i = 0; i < particleCount; i++) {
-        const i4 = i * 4; // Pixel index (R,G,B,A)
-        const i3 = i * 3; // Particle index (X,Y,Z)
+        const i4 = i * 4;
+        const i3 = i * 3;
 
         const r = data[i4] / 255;
         const g = data[i4 + 1] / 255;
         const b = data[i4 + 2] / 255;
         
-        // Calculate Brightness (Luma)
+        // Luma (Brightness)
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
         
-        // PIN ART EFFECT:
-        // Brighter pixels move closer to camera (positive Z)
-        // Darker pixels recede (negative Z)
-        const targetZ = (brightness * 10) - 5; // Range: -5 to +5
-
-        // Smooth interpolation (Lerp) for fluid movement
+        // Z-DEPTH LOGIC
+        // Only modify Z. Keep X and Y locked to the grid positions.
+        // We use the brightness to "push" particles towards the camera.
+        // Multiplier 8.0 gives nice depth.
+        const targetZ = (brightness * 8.0) - 2.0; 
+        
+        // Smooth Lerp
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
-        // COLOR MIXING:
-        // Mix video color with Theme color
-        // If theme is Matrix (green), we force green channel
-        if (currentTheme === themes.matrix) {
-            colors[i3] = 0;
-            colors[i3 + 1] = brightness * 1.5; // Bright green
-            colors[i3 + 2] = 0;
-        } else {
-            // Tint the video with the selected theme
-            // We use Soft Light blending logic roughly
-            colors[i3] = (r * 0.5) + (currentTheme.h * 0.5); 
-            colors[i3 + 1] = (g * 0.5) + (currentTheme.s * 0.5 * brightness); // Saturation affects mix
-            colors[i3 + 2] = (b * 0.5) + (currentTheme.l * 0.5);
-            
-            // Alternative: Just use video colors slightly tinted
-            // colors[i3] += (r - colors[i3]) * 0.1;
-            // colors[i3+1] += (g - colors[i3+1]) * 0.1;
-            // colors[i3+2] += (b - colors[i3+2]) * 0.1;
-            
-            // Let's stick to a clean tint based on brightness for a "Hologram" look
-            const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
-            colors[i3] = themeColor.r * brightness * 2;
-            colors[i3+1] = themeColor.g * brightness * 2;
-            colors[i3+2] = themeColor.b * brightness * 2;
-        }
+        // COLOR LOGIC
+        // Mix theme color with brightness
+        const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
+        
+        // We want bright pixels to be white/bright-colored, dark pixels to fade
+        // This creates the "Hologram" look vs just a blocky image
+        colors[i3] = themeColor.r * brightness + (r * 0.2);
+        colors[i3+1] = themeColor.g * brightness + (g * 0.2);
+        colors[i3+2] = themeColor.b * brightness + (b * 0.2);
     }
     
     particles.geometry.attributes.position.needsUpdate = true;
     particles.geometry.attributes.color.needsUpdate = true;
 }
 
-// Face Tracking for Rotation
 async function detectFace() {
     if (!faceModel || !video) return;
 
@@ -211,12 +249,9 @@ async function detectFace() {
         const faceX = (start[0] + size[0] / 2) / video.videoWidth; 
         const faceY = (start[1] + size[1] / 2) / video.videoHeight;
 
-        // Calculate rotation based on face position
-        // Looking Left (faceX < 0.5) -> Rotate Y negative
-        targetRotationY = (faceX - 0.5) * 1.5; 
-        targetRotationX = (faceY - 0.5) * 1.0; 
+        targetRotationY = (faceX - 0.5) * 1.0; // Reduced sensitivity for stability
+        targetRotationX = (faceY - 0.5) * 0.5; 
     } else {
-        // Center if no face
         targetRotationX *= 0.95;
         targetRotationY *= 0.95;
     }
@@ -227,13 +262,10 @@ async function detectFace() {
 function adjustCamera() {
     const aspect = window.innerWidth / window.innerHeight;
     if (aspect < 0.7) {
-        // Mobile Portrait
-        camera.position.z = 45; 
+        camera.position.z = 40; 
     } else if (aspect < 1) {
-        // Tablet
         camera.position.z = 35;
     } else {
-        // Desktop
         camera.position.z = 25;
     }
     camera.aspect = window.innerWidth / window.innerHeight;
@@ -245,7 +277,7 @@ function changeTheme(name) {
     document.querySelectorAll('.color-scheme button').forEach(b => b.classList.remove('active'));
     document.getElementById(`btn-${name}`).classList.add('active');
     
-    // Update Title Gradient
+    // Update Title
     const header = document.querySelector('.header h1');
     let gradient = 'linear-gradient(45deg, #ff6e7f, #bfe9ff)';
     if(name === 'neon') gradient = 'linear-gradient(45deg, #00ff87, #60efff)';
@@ -262,11 +294,22 @@ function animate() {
     requestAnimationFrame(animate);
 
     if (particles) {
-        updateParticles();
+        if (currentState === 'sphere') {
+            // Idle Spin
+            particles.rotation.y += 0.003;
+            particles.rotation.z += 0.001;
+        } 
+        else if (currentState === 'morphing') {
+            // No rotation during morph, GSAP handles positions
+        }
+        else if (currentState === 'face') {
+            // 1. Update Z-depth from video
+            updateParticlesFromVideo();
 
-        // Apply smooth rotation from face tracking
-        particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.05;
-        particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.05;
+            // 2. Apply Head Tracking
+            particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.1;
+            particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
+        }
     }
     
     renderer.render(scene, camera);
