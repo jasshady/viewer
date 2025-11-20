@@ -35,7 +35,7 @@ let currentTheme = themes.cosmic;
 function init() {
     // 1. Scene Setup
     scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.015); // Lighter fog for distance
+    scene.fog = new THREE.FogExp2(0x050505, 0.015); 
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     
@@ -108,7 +108,7 @@ function createParticles() {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.35, // Base size, adjusted dynamically later
+        size: 0.35, 
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
@@ -140,7 +140,6 @@ async function setupWebcam() {
         faceModel = await blazeface.load();
         detectFace();
 
-        // Trigger morph after short delay
         setTimeout(triggerMorphSequence, 1500);
 
     } catch (err) {
@@ -200,7 +199,6 @@ function updateParticlesFromVideo() {
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
         
         // Z-DEPTH Logic (Pin Art)
-        // Multiplier determines how much the face "pops" out
         const targetZ = (brightness * 12.0) - 4.0; 
         
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
@@ -252,17 +250,13 @@ function adjustCamera() {
     
     // To "Cover" the screen (no borders), we must be close enough
     // that the object is LARGER than the view.
-    // We pick the SMALLER distance of the two fit distances.
+    // We pick the SMALLER distance of the two.
     const fitDist = Math.min(distHeight, distWidth);
     
-    // Move slightly closer (0.9) to ensure edges are strictly cut off
-    camera.position.z = fitDist * 0.9;
+    // CHANGED: Zoom in more (0.85) to force overscan and hide all borders
+    camera.position.z = fitDist * 0.85;
     
-    // Adjust particle size based on zoom so they don't look sparse
     if (particles) {
-        // If we are very close (low z), make particles smaller to keep resolution
-        // If we are far (high z), make them bigger
-        // Base scale logic roughly on standard distance 40
         particles.material.size = 0.35 * (camera.position.z / 40);
     }
 
@@ -305,9 +299,18 @@ function animate() {
     renderer.render(scene, camera);
 }
 
+// Ensure layout updates on resize AND orientation change
 window.addEventListener('resize', () => {
     adjustCamera();
     renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Added specific listener for mobile rotation
+window.addEventListener('orientationchange', () => {
+    setTimeout(() => {
+        adjustCamera();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }, 100);
 });
 
 init();
