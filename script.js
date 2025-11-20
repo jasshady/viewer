@@ -2,24 +2,25 @@ let scene, camera, renderer, particles;
 let video, faceModel;
 
 // CONFIGURATION
-// 160 cols x 125 rows = 20,000 particles (High Res for Face)
+// 160 cols x 125 rows = 20,000 particles
 const gridCols = 160; 
 const gridRows = 125;
 const particleCount = gridCols * gridRows;
 
-// Processing Canvas (Hidden)
+// Processing Canvas
 let faceCanvas, faceCtx;
 
 // State Management
-let currentState = 'sphere'; // sphere -> text -> morphing_to_face -> face
+let currentState = 'sphere'; 
 let targetRotationX = 0;
 let targetRotationY = 0;
 
-// Arrays to store positions for different shapes
+// Position Arrays
 const spherePositions = new Float32Array(particleCount * 3);
 const gridPositions = new Float32Array(particleCount * 3);
-const textPositions = new Float32Array(particleCount * 3); // New array for text
+const textPositions = new Float32Array(particleCount * 3);
 
+// Themes
 const themes = {
     cosmic: { h: 0.6, s: 0.7, l: 0.5 },
     neon: { h: 0.4, s: 1.0, l: 0.5 },
@@ -30,7 +31,7 @@ const themes = {
 let currentTheme = themes.cosmic;
 
 function init() {
-    // 1. Scene Setup
+    // 1. Scene
     scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x050505, 0.02);
 
@@ -42,29 +43,28 @@ function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
     document.getElementById('container').appendChild(renderer.domElement);
 
-    // 2. Init processing canvas for Face
+    // 2. Helpers
     faceCanvas = document.createElement('canvas');
     faceCanvas.width = gridCols;
     faceCanvas.height = gridRows;
     faceCtx = faceCanvas.getContext('2d', { willReadFrequently: true });
 
-    // 3. Calculate Shapes
+    // 3. Calculations
     calculateSpherePositions();
     calculateGridPositions();
-    calculateTextPositions("WELCOME JASMINEE❤️🌹"); // Calculate text coordinates
+    // Recalculated with auto-scaling logic
+    calculateTextPositions("WELCOME JASMINEE❤️🌹"); 
 
-    // 4. Create Particles (Start at Sphere)
+    // 4. Create Particles
     createParticles();
 
-    // 5. Start Sequence
-    setupWebcam(); // Pre-load camera permissions
+    // 5. Run
+    setupWebcam(); // Starts loading camera in background
     animate();
 
-    // 6. TRIGGER THE INTRO SEQUENCE
+    // 6. Start the Show
     startIntroSequence();
 }
-
-// --- SHAPE CALCULATIONS ---
 
 function calculateSpherePositions() {
     for (let i = 0; i < particleCount; i++) {
@@ -80,13 +80,11 @@ function calculateSpherePositions() {
 function calculateGridPositions() {
     const width = 32; 
     const height = 25; 
-    
     for (let i = 0; i < particleCount; i++) {
         const col = i % gridCols;
         const row = Math.floor(i / gridCols);
         const u = col / gridCols;
         const v = row / gridRows;
-
         gridPositions[i * 3] = (u - 0.5) * width;
         gridPositions[i * 3 + 1] = -(v - 0.5) * height;
         gridPositions[i * 3 + 2] = 0; 
@@ -96,31 +94,47 @@ function calculateGridPositions() {
 function calculateTextPositions(text) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    // Make canvas large enough for high res text
-    canvas.width = 2000;
-    canvas.height = 1000;
+    
+    // Use a massive canvas to ensure long text fits
+    canvas.width = 4096; 
+    canvas.height = 1024;
 
+    // 1. Detect Font Size that fits
+    let fontSize = 300;
+    ctx.font = `900 ${fontSize}px "Inter", sans-serif`;
+    let textWidth = ctx.measureText(text).width;
+    
+    // Shrink if too wide
+    while (textWidth > canvas.width * 0.8) {
+        fontSize -= 10;
+        ctx.font = `900 ${fontSize}px "Inter", sans-serif`;
+        textWidth = ctx.measureText(text).width;
+    }
+
+    // 2. Draw Text
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
     ctx.fillStyle = 'white';
-    // Use a bold font that supports emojis
-    ctx.font = '900 180px "Inter", "Segoe UI Emoji", "Apple Color Emoji", sans-serif'; 
+    ctx.font = `900 ${fontSize}px "Inter", "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
+    // 3. Scan Pixels
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
-    
     const points = [];
-    // Scan pixel data
-    for (let y = 0; y < canvas.height; y += 6) { // step 6 for density
-        for (let x = 0; x < canvas.width; x += 6) {
+    
+    // Step size optimization to get enough points ~20k
+    // If canvas is huge, we need larger steps
+    const step = 8; 
+
+    for (let y = 0; y < canvas.height; y += step) {
+        for (let x = 0; x < canvas.width; x += step) {
             const i = (y * canvas.width + x) * 4;
-            if (data[i] > 128) { // If pixel is white (text)
+            if (data[i] > 128) { // White pixel found
                 points.push({
-                    x: (x - canvas.width / 2) * 0.03, // Scale down to world units
+                    x: (x - canvas.width / 2) * 0.03, // Scale down
                     y: -(y - canvas.height / 2) * 0.03,
                     z: 0
                 });
@@ -128,20 +142,19 @@ function calculateTextPositions(text) {
         }
     }
 
-    // Fill the textPositions array
+    // 4. Assign to Particles
     for (let i = 0; i < particleCount; i++) {
         const i3 = i * 3;
         if (i < points.length) {
-            // Assign to text shape
+            // Particle forms text
             textPositions[i3] = points[i].x;
             textPositions[i3 + 1] = points[i].y;
             textPositions[i3 + 2] = points[i].z;
         } else {
-            // Leftover particles: Float in a background sphere (faint)
-            // We reuse sphere calc but wider
+            // Extra particles form a faint background sphere
             const phi = Math.acos(-1 + (2 * i) / particleCount);
             const theta = Math.sqrt(particleCount * Math.PI) * phi;
-            const r = 40 + Math.random() * 10; // Distant background
+            const r = 45 + Math.random() * 10; // Far out
             textPositions[i3] = r * Math.cos(theta) * Math.sin(phi);
             textPositions[i3 + 1] = r * Math.sin(theta) * Math.sin(phi);
             textPositions[i3 + 2] = r * Math.cos(phi);
@@ -151,11 +164,10 @@ function calculateTextPositions(text) {
 
 function createParticles() {
     const geometry = new THREE.BufferGeometry();
-    // Start positions = Sphere
+    // Start at Sphere positions
     const currentPositions = new Float32Array(spherePositions);
     const colors = new Float32Array(particleCount * 3);
 
-    // Init colors 
     for(let i=0; i<particleCount * 3; i+=3) {
         const color = new THREE.Color();
         const z = spherePositions[i+2];
@@ -181,19 +193,18 @@ function createParticles() {
     scene.add(particles);
 }
 
-// --- ANIMATION SEQUENCE ---
-
 function startIntroSequence() {
-    // 1. Immediate Morph: Sphere -> Text
     currentState = 'text';
     
+    // 1. Immediate Morph to Text
     const positions = particles.geometry.attributes.position.array;
     const animObj = { t: 0 };
     
+    // Quickly form the text (2s)
     gsap.to(animObj, {
         t: 1,
-        duration: 2.5, // 2.5s to form text
-        ease: "power3.out",
+        duration: 2,
+        ease: "power2.out",
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
@@ -205,7 +216,7 @@ function startIntroSequence() {
         }
     });
 
-    // 2. Wait 8 Seconds, then Morph to Face Grid
+    // 2. Wait 8 seconds, then morph to Face Grid
     setTimeout(() => {
         triggerFaceMorph();
     }, 8000);
@@ -213,12 +224,10 @@ function startIntroSequence() {
 
 function triggerFaceMorph() {
     currentState = 'morphing_to_face';
-    
     const positions = particles.geometry.attributes.position.array;
-    // Current positions are effectively textPositions now
-    // We morph Text -> Grid
     const animObj = { t: 0 };
     
+    // Morph Text -> Grid
     gsap.to(animObj, {
         t: 1,
         duration: 3,
@@ -226,6 +235,7 @@ function triggerFaceMorph() {
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
+                // Interpolate from Text Position to Grid Position
                 positions[i3] = textPositions[i3] + (gridPositions[i3] - textPositions[i3]) * animObj.t;
                 positions[i3+1] = textPositions[i3+1] + (gridPositions[i3+1] - textPositions[i3+1]) * animObj.t;
                 positions[i3+2] = textPositions[i3+2] + (gridPositions[i3+2] - textPositions[i3+2]) * animObj.t;
@@ -233,15 +243,13 @@ function triggerFaceMorph() {
             particles.geometry.attributes.position.needsUpdate = true;
         },
         onComplete: () => {
-            currentState = 'face'; // Enable video stream
+            currentState = 'face'; 
         }
     });
 
-    // Reset rotation incase the user moved the text around
-    gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2.5 });
+    // Reset rotation
+    gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2 });
 }
-
-// --- VIDEO & TRACKING ---
 
 async function setupWebcam() {
     video = document.getElementById('webcam');
@@ -256,7 +264,7 @@ async function setupWebcam() {
         faceModel = await blazeface.load();
         detectFace();
     } catch (err) {
-        console.error("Webcam error:", err);
+        console.warn("Webcam access pending...");
     }
 }
 
@@ -283,14 +291,14 @@ function updateParticlesFromVideo() {
         const b = data[i4 + 2] / 255;
         
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-        const targetZ = (brightness * 10.0) - 3.0; 
+        const targetZ = (brightness * 12.0) - 4.0; 
         
         positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
 
         const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
-        colors[i3] = themeColor.r * brightness + (r * 0.2);
-        colors[i3+1] = themeColor.g * brightness + (g * 0.2);
-        colors[i3+2] = themeColor.b * brightness + (b * 0.2);
+        colors[i3] = themeColor.r * brightness + (r * 0.15);
+        colors[i3+1] = themeColor.g * brightness + (g * 0.15);
+        colors[i3+2] = themeColor.b * brightness + (b * 0.15);
     }
     
     particles.geometry.attributes.position.needsUpdate = true;
@@ -306,8 +314,8 @@ async function detectFace() {
         const size = [end[0] - start[0], end[1] - start[1]];
         const faceX = (start[0] + size[0] / 2) / video.videoWidth; 
         const faceY = (start[1] + size[1] / 2) / video.videoHeight;
-        targetRotationY = (faceX - 0.5) * 1.0; 
-        targetRotationX = (faceY - 0.5) * 0.5; 
+        targetRotationY = (faceX - 0.5) * 0.8; 
+        targetRotationX = (faceY - 0.5) * 0.4; 
     } else {
         targetRotationX *= 0.95;
         targetRotationY *= 0.95;
@@ -320,7 +328,6 @@ function adjustCamera() {
     if (aspect < 0.7) camera.position.z = 40; 
     else if (aspect < 1) camera.position.z = 35;
     else camera.position.z = 25;
-    
     camera.aspect = aspect;
     camera.updateProjectionMatrix();
 }
@@ -344,12 +351,9 @@ function changeTheme(name) {
 
 function animate() {
     requestAnimationFrame(animate);
-
     if (particles) {
         if (currentState === 'text') {
-            // Idle floating/wave for text
             const time = Date.now() * 0.001;
-            // Only rotate slightly for 3D feel
             particles.rotation.y = Math.sin(time * 0.5) * 0.05;
             particles.rotation.x = Math.sin(time * 0.3) * 0.02;
         }
@@ -359,7 +363,6 @@ function animate() {
             particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
         }
     }
-    
     renderer.render(scene, camera);
 }
 
@@ -367,7 +370,6 @@ window.addEventListener('resize', () => {
     adjustCamera();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
-
 window.addEventListener('orientationchange', () => {
     setTimeout(() => {
         adjustCamera();
