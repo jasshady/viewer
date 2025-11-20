@@ -4,6 +4,7 @@
     box-sizing: border-box;
 }
 
+/* Force full screen and prevent scrolling */
 html, body {
     background: #050505;
     overflow: hidden;
@@ -25,7 +26,7 @@ html, body {
     width: 100vw;
     height: 100vh;
     z-index: 0;
-    touch-action: none;
+    touch-action: none; /* Prevents mobile zoom/scroll */
 }
 
 #webcam {
@@ -47,7 +48,6 @@ html, body {
     text-align: left;
     z-index: 10;
     pointer-events: none;
-    transition: all 0.3s ease;
 }
 
 .header h1 {
@@ -64,7 +64,7 @@ html, body {
     filter: drop-shadow(0 0 20px rgba(255,255,255,0.2));
 }
 
-/* Color Controls - Default (Desktop/Portrait) */
+/* Color Controls - Default (Portrait/Desktop) */
 .color-controls {
     position: fixed;
     top: max(2rem, env(safe-area-inset-top));
@@ -122,25 +122,55 @@ html, body {
 .color-preview.ocean { background: linear-gradient(45deg, #0082c8, #00b4db); }
 .color-preview.matrix { background: linear-gradient(45deg, #00ff00, #003300); }
 
-/* --- RESPONSIVE FIXES --- */
+/* Action Button (Shatter) */
+.actions {
+    position: fixed;
+    bottom: max(2rem, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+}
 
-/* 1. Mobile Portrait */
+#btn-shatter {
+    background: linear-gradient(135deg, #ff4b1f, #ff9068);
+    border: none;
+    padding: 1rem 2rem;
+    color: white;
+    border-radius: 50px;
+    font-weight: 800;
+    font-size: 1rem;
+    cursor: pointer;
+    box-shadow: 0 5px 25px rgba(255, 75, 31, 0.4);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+#btn-shatter:active {
+    transform: translateX(-50%) scale(0.95);
+}
+
+#btn-shatter.active {
+    background: white;
+    color: black;
+}
+
+/* --- RESPONSIVE: Mobile Portrait --- */
 @media (max-width: 768px) and (orientation: portrait) {
     .header h1 { font-size: 2rem; }
     .color-controls { padding: 0.5rem; }
     .color-scheme button { padding: 0.4rem; min-width: auto; }
-    .color-scheme button span { display: none; } /* Hide text label to save space */
+    .color-scheme button span { display: none; }
 }
 
-/* 2. Mobile LANDSCAPE (The fix for your issue) */
+/* --- RESPONSIVE: Landscape Mode Fix --- */
 @media (max-height: 500px) and (orientation: landscape) {
-    
-    /* Move controls to BOTTOM CENTER */
     .color-controls {
-        top: auto; /* Unset top */
-        right: 50%;
+        top: auto; 
+        right: auto;
+        left: max(1rem, env(safe-area-inset-left));
         bottom: max(1rem, env(safe-area-inset-bottom));
-        transform: translateX(50%);
+        transform: none;
         padding: 0.5rem;
         width: auto;
         max-width: 90%;
@@ -148,11 +178,9 @@ html, body {
         justify-content: center;
     }
 
-    /* Layout buttons horizontally */
     .color-scheme {
         flex-direction: row;
         flex-wrap: wrap;
-        justify-content: center;
         gap: 0.5rem;
     }
 
@@ -162,7 +190,14 @@ html, body {
         font-size: 0.8rem;
     }
 
-    /* Shrink header so it doesn't overlap top-left text */
+    /* Move shatter button to right corner in landscape */
+    .actions {
+        left: auto;
+        transform: none;
+        right: max(2rem, env(safe-area-inset-right));
+        bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+
     .header {
         top: max(1rem, env(safe-area-inset-top));
         left: max(1rem, env(safe-area-inset-left));
