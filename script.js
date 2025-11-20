@@ -2,7 +2,6 @@ let scene, camera, renderer, particles;
 let video, faceModel;
 
 // CONFIGURATION
-// 160 cols x 125 rows = 20,000 particles
 const gridCols = 160; 
 const gridRows = 125;
 const particleCount = gridCols * gridRows;
@@ -14,19 +13,22 @@ let faceCanvas, faceCtx;
 let currentState = 'sphere'; 
 let targetRotationX = 0;
 let targetRotationY = 0;
+let isExploded = false; // Dispersion State
 
 // Interaction (Ripples)
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-let ripples = []; // Stores active ripples
+let ripples = []; 
 
-// Position & Color Arrays
+// Arrays
 const spherePositions = new Float32Array(particleCount * 3);
 const gridPositions = new Float32Array(particleCount * 3);
 const textPositions = new Float32Array(particleCount * 3);
 const textColors = new Float32Array(particleCount * 3);
+// Velocities for explosion
+const velocities = new Float32Array(particleCount * 3);
 
-// Reusable Color Object (Optimization)
+// Reusable Color Object
 const tempColor = new THREE.Color();
 
 // Themes
@@ -62,6 +64,7 @@ function init() {
     calculateSpherePositions();
     calculateGridPositions();
     calculateTextPositions("WELCOME JASMINEE❤️🌹"); 
+    calculateExplosionVelocities(); 
 
     // 4. Create Particles
     createParticles();
@@ -71,8 +74,36 @@ function init() {
     setupInteraction(); 
     animate();
 
-    // 6. Start the Show
+    // 6. Start
     startIntroSequence();
+}
+
+// --- ACTION HANDLERS ---
+function toggleShatter() {
+    isExploded = !isExploded;
+    const btn = document.getElementById('btn-shatter');
+    if(isExploded) {
+        btn.innerText = "🧲 Reform";
+        btn.classList.add('active');
+    } else {
+        btn.innerText = "💥 Shatter";
+        btn.classList.remove('active');
+    }
+}
+
+function calculateExplosionVelocities() {
+    for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3;
+        const x = (Math.random() - 0.5);
+        const y = (Math.random() - 0.5);
+        const z = (Math.random() - 0.5);
+        const len = Math.sqrt(x*x + y*y + z*z);
+        const speed = 0.05 + Math.random() * 0.15; 
+        
+        velocities[i3] = (x / len) * speed;
+        velocities[i3+1] = (y / len) * speed;
+        velocities[i3+2] = (z / len) * speed;
+    }
 }
 
 // --- INTERACTION LOGIC ---
@@ -81,6 +112,8 @@ function setupInteraction() {
 }
 
 function onTouch(event) {
+    if(isExploded) return;
+
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -97,7 +130,7 @@ function onTouch(event) {
             age: 0,      
             life: 60,    
             speed: 0.5,  
-            strength: 4.0 // Increased strength for color impact
+            strength: 3.0 
         });
     }
 }
@@ -161,6 +194,7 @@ function calculateTextPositions(text) {
     for (let y = 0; y < canvas.height; y += step) {
         for (let x = 0; x < canvas.width; x += step) {
             const i = (y * canvas.width + x) * 4;
+            // RGB check for colors
             if (data[i] > 50 || data[i+1] > 50 || data[i+2] > 50) { 
                 points.push({
                     x: (x - canvas.width / 2) * 0.03, 
@@ -306,6 +340,17 @@ async function setupWebcam() {
     }
 }
 
+function updateParticlesExploded() {
+    const positions = particles.geometry.attributes.position.array;
+    for(let i=0; i<particleCount; i++) {
+        const i3 = i * 3;
+        positions[i3] += velocities[i3];
+        positions[i3+1] += velocities[i3+1];
+        positions[i3+2] += velocities[i3+2];
+    }
+    particles.geometry.attributes.position.needsUpdate = true;
+}
+
 function updateParticlesFromVideo() {
     // 1. Clean ripples
     for(let i = ripples.length - 1; i >= 0; i--) {
@@ -325,6 +370,9 @@ function updateParticlesFromVideo() {
     
     const positions = particles.geometry.attributes.position.array;
     const colors = particles.geometry.attributes.color.array;
+
+    // Update tempColor
+    tempColor.setHSL(currentTheme.h, currentTheme.s, currentTheme.l);
 
     for (let i = 0; i < particleCount; i++) {
         const i4 = i * 4;
@@ -354,27 +402,16 @@ function updateParticlesFromVideo() {
             }
         }
 
-        // Final Z = Face Depth + Ripple Depth
+        // Target Z
         const targetZ = (brightness * 12.0) - 4.0 + rippleZ; 
         
-        positions[i3 + 2] += (targetZ - positions[i3 + 2]) * 0.15;
+        // --- REFORM LERP ---
+        // Moves particle towards Grid Position + Video Depth
+        positions[i3] += (gridPositions[i3] - positions[i3]) * 0.1;
+        positions[i3+1] += (gridPositions[i3+1] - positions[i3+1]) * 0.1;
+        positions[i3+2] += (targetZ - positions[i3+2]) * 0.15;
 
-        // --- DYNAMIC COLOR SHIFTING ---
-        // We shift the hue based on the Z-depth (targetZ)
-        // We shift the lightness based on Ripple Intensity (rippleZ)
-        
-        // Map Z (-5 to 15) to a small hue shift (-0.1 to 0.1)
-        const hueOffset = (targetZ * 0.015); 
-        // Map Ripple to lightness boost (Make peaks bright)
-        const lightOffset = Math.abs(rippleZ) * 0.1;
-
-        // Update Temp Color based on Theme + Depth
-        tempColor.setHSL(
-            (currentTheme.h + hueOffset + 1.0) % 1.0, 
-            currentTheme.s, 
-            Math.min(1.0, currentTheme.l + lightOffset)
-        );
-
+        // Standard Colors
         colors[i3] = tempColor.r * brightness + (r * 0.15);
         colors[i3+1] = tempColor.g * brightness + (g * 0.15);
         colors[i3+2] = tempColor.b * brightness + (b * 0.15);
@@ -437,9 +474,16 @@ function animate() {
             particles.rotation.x = Math.sin(time * 0.3) * 0.02;
         }
         else if (currentState === 'face') {
-            updateParticlesFromVideo();
-            particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.1;
-            particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
+            if (isExploded) {
+                // EXPLOSION PHYSICS
+                updateParticlesExploded();
+                particles.rotation.y += 0.005;
+            } else {
+                // REFORM / MIRROR PHYSICS
+                updateParticlesFromVideo();
+                particles.rotation.x += (targetRotationX - particles.rotation.x) * 0.1;
+                particles.rotation.y += (targetRotationY - particles.rotation.y) * 0.1;
+            }
         }
     }
     renderer.render(scene, camera);
