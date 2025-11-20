@@ -9,7 +9,9 @@ body {
     overflow: hidden;
     font-family: 'Inter', sans-serif;
     color: white;
+    /* Use dvh for full mobile height handling */
     height: 100dvh; 
+    width: 100vw;
 }
 
 #container {
@@ -43,7 +45,7 @@ body {
 }
 
 .header h1 {
-    font-size: 3rem; /* Larger title */
+    font-size: 3rem; 
     font-weight: 900;
     line-height: 1;
     text-transform: uppercase;
