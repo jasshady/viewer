@@ -15,10 +15,12 @@ let currentState = 'sphere';
 let targetRotationX = 0;
 let targetRotationY = 0;
 
-// Position Arrays
+// Position & Color Arrays
 const spherePositions = new Float32Array(particleCount * 3);
 const gridPositions = new Float32Array(particleCount * 3);
 const textPositions = new Float32Array(particleCount * 3);
+// We need to store the "target" colors for the text phase
+const textColors = new Float32Array(particleCount * 3);
 
 // Themes
 const themes = {
@@ -52,14 +54,13 @@ function init() {
     // 3. Calculations
     calculateSpherePositions();
     calculateGridPositions();
-    // Recalculated with auto-scaling logic
     calculateTextPositions("WELCOME JASMINEE❤️🌹"); 
 
     // 4. Create Particles
     createParticles();
 
     // 5. Run
-    setupWebcam(); // Starts loading camera in background
+    setupWebcam(); 
     animate();
 
     // 6. Start the Show
@@ -95,16 +96,14 @@ function calculateTextPositions(text) {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     
-    // Use a massive canvas to ensure long text fits
     canvas.width = 4096; 
     canvas.height = 1024;
 
-    // 1. Detect Font Size that fits
+    // 1. Detect Font Size
     let fontSize = 300;
     ctx.font = `900 ${fontSize}px "Inter", sans-serif`;
     let textWidth = ctx.measureText(text).width;
     
-    // Shrink if too wide
     while (textWidth > canvas.width * 0.8) {
         fontSize -= 10;
         ctx.font = `900 ${fontSize}px "Inter", sans-serif`;
@@ -120,21 +119,19 @@ function calculateTextPositions(text) {
     ctx.textBaseline = 'middle';
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
-    // 3. Scan Pixels
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
     const points = [];
     
-    // Step size optimization to get enough points ~20k
-    // If canvas is huge, we need larger steps
-    const step = 8; 
+    // FIX: Denser scan (6 instead of 8) for brighter, fuller text
+    const step = 6; 
 
     for (let y = 0; y < canvas.height; y += step) {
         for (let x = 0; x < canvas.width; x += step) {
             const i = (y * canvas.width + x) * 4;
-            if (data[i] > 128) { // White pixel found
+            if (data[i] > 128) { 
                 points.push({
-                    x: (x - canvas.width / 2) * 0.03, // Scale down
+                    x: (x - canvas.width / 2) * 0.03, 
                     y: -(y - canvas.height / 2) * 0.03,
                     z: 0
                 });
@@ -142,29 +139,40 @@ function calculateTextPositions(text) {
         }
     }
 
-    // 4. Assign to Particles
+    // 3. Assign Positions AND Colors for Text Mode
+    const themeColor = new THREE.Color().setHSL(currentTheme.h, currentTheme.s, 0.8); // Bright version
+
     for (let i = 0; i < particleCount; i++) {
         const i3 = i * 3;
         if (i < points.length) {
-            // Particle forms text
+            // TEXT PARTICLES
             textPositions[i3] = points[i].x;
             textPositions[i3 + 1] = points[i].y;
             textPositions[i3 + 2] = points[i].z;
+            
+            // Make them BRIGHT WHITE/THEME
+            textColors[i3] = themeColor.r;
+            textColors[i3+1] = themeColor.g;
+            textColors[i3+2] = themeColor.b;
         } else {
-            // Extra particles form a faint background sphere
+            // BACKGROUND PARTICLES (Faint)
             const phi = Math.acos(-1 + (2 * i) / particleCount);
             const theta = Math.sqrt(particleCount * Math.PI) * phi;
-            const r = 45 + Math.random() * 10; // Far out
+            const r = 50 + Math.random() * 10; 
             textPositions[i3] = r * Math.cos(theta) * Math.sin(phi);
             textPositions[i3 + 1] = r * Math.sin(theta) * Math.sin(phi);
             textPositions[i3 + 2] = r * Math.cos(phi);
+
+            // Make them dark/transparent
+            textColors[i3] = 0.05;
+            textColors[i3+1] = 0.05;
+            textColors[i3+2] = 0.1;
         }
     }
 }
 
 function createParticles() {
     const geometry = new THREE.BufferGeometry();
-    // Start at Sphere positions
     const currentPositions = new Float32Array(spherePositions);
     const colors = new Float32Array(particleCount * 3);
 
@@ -181,12 +189,12 @@ function createParticles() {
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const material = new THREE.PointsMaterial({
-        size: 0.15, 
+        size: 0.2, // Slightly larger for visibility
         vertexColors: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         transparent: true,
-        opacity: 0.85
+        opacity: 0.9
     });
 
     particles = new THREE.Points(geometry, material);
@@ -196,11 +204,15 @@ function createParticles() {
 function startIntroSequence() {
     currentState = 'text';
     
-    // 1. Immediate Morph to Text
     const positions = particles.geometry.attributes.position.array;
+    const colors = particles.geometry.attributes.color.array;
+    
+    // We also need to tween the COLORS from Sphere Colors -> Text Colors (Bright)
+    // Save start colors
+    const startColors = new Float32Array(colors);
+    
     const animObj = { t: 0 };
     
-    // Quickly form the text (2s)
     gsap.to(animObj, {
         t: 1,
         duration: 2,
@@ -208,15 +220,23 @@ function startIntroSequence() {
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
+                
+                // Morph Position
                 positions[i3] = spherePositions[i3] + (textPositions[i3] - spherePositions[i3]) * animObj.t;
                 positions[i3+1] = spherePositions[i3+1] + (textPositions[i3+1] - spherePositions[i3+1]) * animObj.t;
                 positions[i3+2] = spherePositions[i3+2] + (textPositions[i3+2] - spherePositions[i3+2]) * animObj.t;
+                
+                // Morph Color (Crucial for visibility!)
+                colors[i3] = startColors[i3] + (textColors[i3] - startColors[i3]) * animObj.t;
+                colors[i3+1] = startColors[i3+1] + (textColors[i3+1] - startColors[i3+1]) * animObj.t;
+                colors[i3+2] = startColors[i3+2] + (textColors[i3+2] - startColors[i3+2]) * animObj.t;
             }
             particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.color.needsUpdate = true;
         }
     });
 
-    // 2. Wait 8 seconds, then morph to Face Grid
+    // Wait 8 seconds, then morph to Face Grid
     setTimeout(() => {
         triggerFaceMorph();
     }, 8000);
@@ -227,7 +247,6 @@ function triggerFaceMorph() {
     const positions = particles.geometry.attributes.position.array;
     const animObj = { t: 0 };
     
-    // Morph Text -> Grid
     gsap.to(animObj, {
         t: 1,
         duration: 3,
@@ -235,7 +254,6 @@ function triggerFaceMorph() {
         onUpdate: () => {
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
-                // Interpolate from Text Position to Grid Position
                 positions[i3] = textPositions[i3] + (gridPositions[i3] - textPositions[i3]) * animObj.t;
                 positions[i3+1] = textPositions[i3+1] + (gridPositions[i3+1] - textPositions[i3+1]) * animObj.t;
                 positions[i3+2] = textPositions[i3+2] + (gridPositions[i3+2] - textPositions[i3+2]) * animObj.t;
@@ -247,7 +265,6 @@ function triggerFaceMorph() {
         }
     });
 
-    // Reset rotation
     gsap.to(particles.rotation, { x: 0, y: 0, z: 0, duration: 2 });
 }
 
